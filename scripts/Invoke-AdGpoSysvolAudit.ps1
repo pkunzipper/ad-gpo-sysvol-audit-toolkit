@@ -1,6 +1,38 @@
 #Requires -Version 7.0
 
 <#
+.SYNOPSIS
+Creates a read-only audit snapshot of Active Directory GPO permissions, SYSVOL ACLs, and matching Security events.
+
+.DESCRIPTION
+Collects GPC permissions, GPT NTFS access rules, and matching events 4662 (WRITE_DAC), 4670, and 5136
+from every discovered domain controller for the previous 30 days. Writes a timestamped CSV and a
+self-contained HTML dashboard. Trustee comparison results are triage signals; they are not automatic
+proof of effective access or a recommendation to change permissions.
+
+.INPUTS
+None. The script takes no pipeline input.
+
+.OUTPUTS
+No structured pipeline output. Writes one timestamped CSV and one HTML report to the current directory.
+
+.EXAMPLE
+pwsh -NoProfile -File .\scripts\Invoke-AdGpoSysvolAudit.ps1
+
+.NOTES
+Owner: Mattia Grandi
+Version: 1.0.0
+Website: https://www.mgworkplace.it
+Repository: https://github.com/pkunzipper/ad-gpo-sysvol-audit-toolkit
+Read-only: does not modify AD objects, GPOs, SYSVOL ACLs, audit policy, or group membership.
+The CSV and HTML contain sensitive identity and policy data; protect both outputs.
+
+.LINK
+https://www.mgworkplace.it/it/field-guides/active-directory-gpo-sysvol-acl-security-assessment
+
+.LINK
+https://www.mgworkplace.it/en/field-guides/active-directory-gpo-sysvol-acl-security-assessment
+
 PREREQUISITES
 - PowerShell 7 or later.
 - RSAT ActiveDirectory and GroupPolicy modules installed.
@@ -14,6 +46,7 @@ if (-not $IsWindows) {
     throw "This audit requires Windows because it uses RSAT and Windows Security event logs."
 }
 
+# RSAT often installs these legacy manifests outside PowerShell 7's default module path.
 $windowsPowerShellModulePaths = @(
     (Join-Path $env:WINDIR "System32\WindowsPowerShell\v1.0\Modules"),
     (Join-Path $env:WINDIR "SysWOW64\WindowsPowerShell\v1.0\Modules"),
@@ -45,13 +78,16 @@ foreach ($moduleName in $requiredModuleNames) {
 $missingModules = @($requiredModuleNames | Where-Object {
     -not $rsatModuleManifestPaths.ContainsKey($_)
 })
+# Fail early with the searched paths instead of letting module auto-discovery fail later.
 if ($missingModules.Count -gt 0) {
     throw "RSAT module manifest(s) not found: $($missingModules -join ', '). Searched Windows PowerShell module paths: $($moduleSearchPaths -join '; '). Install the RSAT Active Directory and Group Policy management tools."
 }
 
+# Load RSAT directly in PS7. WinPSCompat deserializes GPTrustee and can discard its SID property.
 Import-Module -Name $rsatModuleManifestPaths["ActiveDirectory"] -SkipEditionCheck -ErrorAction Stop
 Import-Module -Name $rsatModuleManifestPaths["GroupPolicy"] -SkipEditionCheck -ErrorAction Stop
 
+# Use the PDC for the current GPO/ACL snapshot; Security events must be queried from each DC.
 $domain = Get-ADDomain
 $domainController = $domain.PDCEmulator
 $domainDnsRoot = $domain.DNSRoot
@@ -83,6 +119,8 @@ foreach ($gpo in $gpos) {
     $gpoByGuid[$gpoGuid] = $gpo
 }
 
+# Pass immutable scalar identity fields to workers. GPO objects can lose properties such as
+# DisplayName when crossing a parallel runspace boundary.
 # Each worker returns its own ACL rows; the shared report list is only updated after the parallel loop.
 $gpoWork = for ($index = 0; $index -lt $gpos.Count; $index++) {
     [pscustomobject]@{
@@ -109,6 +147,7 @@ $gpoRows = @($gpoWork | ForEach-Object -Parallel {
     function Get-PrincipalKey {
         param([object]$Principal, [object]$Cache)
 
+        # GPTrustee exposes a structured SID; use it directly before attempting name translation.
         if ($Principal -is [System.Security.Principal.SecurityIdentifier]) {
             return $Principal.Value
         }
@@ -145,6 +184,7 @@ $gpoRows = @($gpoWork | ForEach-Object -Parallel {
             $principalKey = $identity.Translate([System.Security.Principal.SecurityIdentifier]).Value
         }
         catch {
+            # Keep a stable comparison key when a trustee cannot be resolved to a SID.
             $principalKey = $principalText.Trim().ToUpperInvariant()
         }
 
@@ -188,6 +228,8 @@ $gpoRows = @($gpoWork | ForEach-Object -Parallel {
             return
         }
 
+        # GPC permission levels and GPT NTFS rights are different models. This comparison only
+        # reports trustee presence on both sides; it does not equate permission levels.
         $gpcPrincipalKeys = @{}
         foreach ($permission in $gpoPermissions) {
             $principalKey = Get-PrincipalKey $permission.Trustee $principalKeyCache
@@ -245,6 +287,7 @@ $gpoRows = @($gpoWork | ForEach-Object -Parallel {
             })
         }
 
+        # Include explicit and inherited ACEs, retaining inheritance metadata for operator review.
         foreach ($ace in $gptAcl.Access) {
             $principalKey = Get-PrincipalKey $ace.IdentityReference $principalKeyCache
             $principalSignal = if ($gpcPrincipalKeys.ContainsKey($principalKey)) {
@@ -303,6 +346,7 @@ $records.AddRange([object[]]$gpoRows)
 Write-Progress -Activity "Reading GPO ACLs" -Completed
 
 Write-Host "[4/4] Reading recent Security events from all domain controllers..."
+# Event 4662 is queried separately with an ObjectType filter; WRITE_DAC remains a client-side test.
 $eventIds = @(4670, 5136)
 $objectTypeGuid = "f30e3bc2-9ff0-11d1-b603-0000f80367c1"
 $sinceUtc = $since.ToUniversalTime().ToString(
@@ -319,7 +363,8 @@ $dcWork = for ($index = 0; $index -lt $domainControllers.Count; $index++) {
 }
 $eventIdsForWorkers = $eventIds
 
-# 4662 ObjectType identifies groupPolicyContainer; the XPath matches common raw GUID encodings.
+# 4662 ObjectType identifies groupPolicyContainer. Windows event XML may encode its GUID with
+# percent/braces, braces only, or no braces, so the server-side XPath accepts each representation.
 # If a DC uses another encoding, replace this query with the broader FilterHashtable fallback below.
 # Get-WinEvent -ComputerName $eventDc -FilterHashtable @{
 #     LogName = "Security"
@@ -398,6 +443,7 @@ $eventRows = @($dcWork | ForEach-Object -Parallel {
                 $eventData[$field.GetAttribute("Name")] = $field.InnerText
             }
 
+            # 5136 names the directory object as ObjectDN; 4662/4670 use ObjectName.
             $objectName = if ($event.Id -eq 5136) { $eventData["ObjectDN"] } else { $eventData["ObjectName"] }
             $matchedGpo = $null
 
@@ -405,6 +451,7 @@ $eventRows = @($dcWork | ForEach-Object -Parallel {
                 $matchedGpo = $gpcByDn[$objectName]
             }
             elseif ($objectName) {
+                # Normalize braced or unbraced GUIDs to the dictionary's canonical D format.
                 $guidMatch = [regex]::Match(
                     [string]$objectName,
                     '(?i)\{?(?<Guid>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\}?'
@@ -418,6 +465,7 @@ $eventRows = @($dcWork | ForEach-Object -Parallel {
             if (-not $matchedGpo) { continue }
 
             if ($event.Id -eq 4662) {
+                # 4662 includes many directory operations; retain only WRITE_DAC on the GPC.
                 $maskText = ([string]$eventData["AccessMask"]) -replace '^0x', ''
                 [uint32]$accessMask = 0
                 $parsedMask = [uint32]::TryParse(
@@ -475,7 +523,7 @@ $eventRows = @($dcWork | ForEach-Object -Parallel {
 } -ThrottleLimit 3)
 $records.AddRange([object[]]$eventRows)
 Write-Progress -Activity "Reading Security events" -Completed
-# Preserve the CSV export and add an offline HTML companion from the same collected rows.
+# Keep the CSV as the complete evidence artifact; the HTML is a local, convenient view over the same rows.
 Write-Host "Exporting $($records.Count) report rows to $reportPath..."
 $records | Export-Csv -Path $reportPath -NoTypeInformation -Encoding UTF8
 Write-Host "Building the interactive HTML report..."
