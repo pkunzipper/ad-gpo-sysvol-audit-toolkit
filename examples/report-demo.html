@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AD GPO/SYSVOL Audit - Synthetic Example</title>
+<style>
+:root{font-family:Segoe UI,Arial,sans-serif;color:#17242b;background:#f4f7f5;--line:#d4dee1;--teal:#087f78;--muted:#52646d}*{box-sizing:border-box}body{margin:0}header{padding:24px max(20px,calc((100vw - 1100px)/2));background:#173940;color:white}h1{font-size:24px;margin:0 0 6px}header p{margin:0;color:#d2e0df}main{max-width:1100px;margin:24px auto;padding:0 20px}.notice{padding:12px 14px;background:#fff4dc;border-left:4px solid #a85b08;margin-bottom:18px}.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.metric,section{background:white;border:1px solid var(--line);border-radius:4px;padding:14px}.metric small{display:block;color:var(--muted);text-transform:uppercase}.metric strong{display:block;font-size:24px;margin-top:6px}.charts{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:12px 0}.bar{display:flex;align-items:center;gap:8px;margin:10px 0;font-size:12px}.bar-label{width:95px;color:var(--muted)}.track{flex:1;height:12px;background:#e8eeee}.fill{height:100%;background:var(--teal)}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;font-size:12px}th,td{text-align:left;padding:9px;border-bottom:1px solid #e5ebed;overflow-wrap:anywhere}th{background:#eaf0f0}@media(max-width:700px){.metrics{grid-template-columns:repeat(2,1fr)}.charts{grid-template-columns:1fr}}
+</style>
+</style>
+<body>
+<header><h1>AD GPO/SYSVOL Audit</h1><p>Illustrative offline report</p></header>
+<main>
+<p class="notice"><strong>Synthetic example only.</strong> Every domain, GPO, SID, user, event, and GUID on this page is fictitious and uses reserved example.test data.</p>
+<div class="metrics">
+<div class="metric"><small>GPOs scanned</small><strong>1</strong></div>
+<div class="metric"><small>ACL snapshot rows</small><strong>2</strong></div>
+<div class="metric"><small>Matched security events</small><strong>1</strong></div>
+<div class="metric"><small>Unmatched trustees</small><strong>0</strong></div>
+</div>
+<div class="charts">
+<section><h2>Events by ID</h2><div class="bar"><span class="bar-label">5136</span><span class="track"><span class="fill" style="display:block;width:100%"></span></span><b>1</b></div></section>
+<section><h2>ACL rows by source</h2><div class="bar"><span class="bar-label">GPC</span><span class="track"><span class="fill" style="display:block;width:100%"></span></span><b>1</b></div><div class="bar"><span class="bar-label">GPT</span><span class="track"><span class="fill" style="display:block;width:100%"></span></span><b>1</b></div></section>
+<section><h2>Events by DC</h2><div class="bar"><span class="bar-label">dc01.example.test</span><span class="track"><span class="fill" style="display:block;width:100%"></span></span><b>1</b></div></section>
+</div>
+<section><h2>Report records</h2><div class="table-wrap"><table><thead><tr><th>Time</th><th>Type</th><th>Controller</th><th>GPO</th><th>Source</th><th>Principal</th><th>Permission</th><th>Event</th><th>Actor</th><th>Review signal</th></tr></thead><tbody>
+<tr><td>2026-09-29T12:00:00Z</td><td>ACL snapshot</td><td>dc01.example.test</td><td>LAB - Workstation Baseline</td><td>GPC / Get-GPPermission</td><td>EXAMPLE\Policy Readers</td><td>GpoRead</td><td></td><td></td><td>Trustee present on both ACLs</td></tr>
+<tr><td>2026-09-29T12:00:00Z</td><td>ACL snapshot</td><td>dc01.example.test</td><td>LAB - Workstation Baseline</td><td>GPT / SYSVOL NTFS</td><td>EXAMPLE\Policy Readers</td><td>ReadAndExecute</td><td></td><td></td><td>Trustee present on both ACLs</td></tr>
+<tr><td>2026-09-29T11:58:12Z</td><td>Security event</td><td>dc01.example.test</td><td>LAB - Workstation Baseline</td><td>Windows Security</td><td></td><td></td><td>5136</td><td>EXAMPLE\Audit Operator</td><td></td></tr>
+</tbody></table></div></section>
+</main>
+</body>
+</html>
